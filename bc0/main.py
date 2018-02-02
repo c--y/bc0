@@ -10,7 +10,7 @@ import leveldb
 TARGET_BITS = 24
 MAX_NONCE = sys.maxsize
 FILE_NAME = './db'
-TIP_KEY = 'l'
+TIP_KEY = b'l'
 
 
 def _sha256(bs):
@@ -23,6 +23,20 @@ def _int64_bytes(i):
     return struct.pack('>q', i)
 
 
+class _Store:
+    def __init__(self, path):
+        self.db = leveldb.LevelDB(path)
+
+    def get(self, key):
+        try:
+            return self.db.Get(key)
+        except:
+            return None
+
+    def put(self, key, value):
+        return self.db.Put(key, value)
+
+
 class Block:
     def __init__(self, data, prev_hash):
         self.timestamp = int(time.time())
@@ -32,10 +46,6 @@ class Block:
         nonce, hash_ = self.pow.run()
         self.hash = hash_
         self.nonce = nonce
-
-    def _set_hash(self):
-        headers = self.prev_hash + bytes(self.data, 'utf-8') + bytes(str(self.timestamp), 'utf-8')
-        self.hash = _sha256(headers)
 
     def serialize(self):
         return pickle.dumps(self)
@@ -50,13 +60,31 @@ class Block:
 
 
 class BlockChain:
-    def __init__(self):
+    def __init__(self, store):
         self.tip = b''
-        self.db = None
+        self.store = store
+
+    def add(self, data):
+        tip = self.store.get(TIP_KEY)
+        if not tip:
+            raise ValueError('tip')
+        block = Block(data, tip)
+        self.store.put(block.hash, block.serialize())
+        self.store.put(TIP_KEY, block.hash)
+        return block
 
     @staticmethod
-    def create():
-        return BlockChain()
+    def create(path):
+        store = _Store(path)
+        tip = store.get(TIP_KEY)
+        bc = BlockChain(store)
+        if tip is None:
+            genesis = Block.genesis()
+            store.put(genesis.hash, genesis.serialize())
+            store.put(TIP_KEY, genesis.hash)
+            tip = genesis.hash
+        bc.tip = tip
+        return bc
 
 
 class BlockChainIterator:
@@ -103,10 +131,5 @@ class UTXO:
 
 
 if __name__ == '__main__':
-    bc = BlockChain()
-    bc.add('send 1 to Ivan')
-    bc.add('send 2 to Ivan')
-
-    for b in bc.blocks:
-        print('prev: {0}\ndata: {1}\nhash: {2}\n'.format(
-            binascii.hexlify(b.prev_hash), b.data, binascii.hexlify(b.hash)))
+    bc = BlockChain.create('./db')
+    print(bc.tip)
