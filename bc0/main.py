@@ -1,3 +1,4 @@
+import json
 import sys
 import binascii
 import time
@@ -21,6 +22,10 @@ def _sha256(bs):
 
 def _int64_bytes(i):
     return struct.pack('>q', i)
+
+
+def _bytes_str(bs):
+    return binascii.hexlify(bs)
 
 
 class _Store:
@@ -50,6 +55,10 @@ class Block:
     def serialize(self):
         return pickle.dumps(self)
 
+    def __repr__(self):
+        return 'timestamp:{},prev_hash:{},hash={}'.format(
+            self.timestamp, _bytes_str(self.prev_hash), _bytes_str(self.hash))
+
     @staticmethod
     def deserialize(bs):
         return pickle.loads(bs)
@@ -73,6 +82,9 @@ class BlockChain:
         self.store.put(TIP_KEY, block.hash)
         return block
 
+    def iterator(self):
+        return BlockChainIterator(self.tip, self.store)
+
     @staticmethod
     def create(path):
         store = _Store(path)
@@ -88,7 +100,20 @@ class BlockChain:
 
 
 class BlockChainIterator:
-    pass
+    def __init__(self, tip, store):
+        self.current_hash = tip
+        self.store = store
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        bs = self.store.get(self.current_hash)
+        if bs is None:
+            raise StopIteration()
+        block = Block.deserialize(bs)
+        self.current_hash = block.prev_hash
+        return block
 
 
 class POW:
@@ -118,18 +143,73 @@ class POW:
         return nonce, hash_
 
 
+class TX:
+    def __init__(self, vin, vout):
+        self.id = b''
+        # [TXI]
+        self.vin = vin
+        # [TXO]
+        self.vout = vout
+        # set the ID
+        self._set_id()
+
+    def _set_id(self):
+        self.id = _sha256(pickle.dumps(self))
+
+    @staticmethod
+    def new_coinbase_tx(to, data):
+        if data == '':
+            data = 'Reward to {]'.format(to)
+        txi = TXI()
+        txo = TXO()
+        tx = TX([txi,], [txo,])
+        return tx
+
+
 class TXI:
-    pass
+    def __init__(self):
+        self.txid = b''
+        self.vout = 0
+        self.script_sig = b''
 
 
 class TXO:
-    pass
+    def __init__(self):
+        self.value = b''
+        self.script_pub_key = b''
 
 
 class UTXO:
-    pass
+    def __init__(self):
+        pass
+
+
+class CLI:
+    def __init__(self, bc):
+        self.bc = bc
+
+    def cmd_add(self, data):
+        self.bc.add(data)
+
+    def cmd_print(self):
+        it = self.bc.iterator()
+        for b in it:
+            print(b)
+
+    def run(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-a', '--add', dest='add_data')
+        parser.add_argument('-p', '--print', help='print chain')
+        args = parser.parse_args()
+
+        if args.add_data:
+            self.cmd_add(args.add_data)
+        elif args.print:
+            self.cmd_print()
 
 
 if __name__ == '__main__':
     bc = BlockChain.create('./db')
-    print(bc.tip)
+    cli = CLI(bc)
+    cli.run()
